@@ -1,5 +1,13 @@
 # Play / cats integration 
 
+This project show cats and cats effect integration with tagless pattern in a playframework application. 
+
+## Run the project 
+
+``` 
+sbt ~run 
+```
+
 ## Apis 
 
 ### List users
