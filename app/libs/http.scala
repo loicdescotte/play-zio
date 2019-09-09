@@ -1,37 +1,36 @@
 package libs
-import cats.data.EitherT
-import cats.effect.Effect
+
 import play.api.mvc.{Action, ActionBuilder, BodyParser, Result}
+import zio.{DefaultRuntime, IO, UIO}
 
 object http {
 
-  implicit class ActionBuilderOps[+R[_], B](ab: ActionBuilder[R, B]) {
-    import cats.implicits._
-    import cats.effect.implicits._
+  //TODO use ZIO environment if need to do more complex dependency injection
+  val runtime = new DefaultRuntime {}
 
-    def asyncF[F[_]: Effect](cb: R[B] => F[Result]): Action[B] = ab.async { c =>
-      cb(c).toIO.unsafeToFuture()
+  implicit class ActionBuilderOps[+R[_], B](actionBuilder: ActionBuilder[R, B]) {
+
+    def zio[E](zioActionBody: R[B] => IO[E, Result]): Action[B] = actionBuilder.async { request =>
+      runtime.unsafeRun(
+        ioToTask(zioActionBody(request)).toFuture
+      )
     }
 
-    def asyncF[F[_]: Effect, A](
-        bp: BodyParser[A]
-    )(cb: R[A] => F[Result]): Action[A] =
-      ab.async[A](bp) { c =>
-        cb(c).toIO.unsafeToFuture()
-      }
-
-    def asyncEitherT[F[_]: Effect](
-        cb: R[B] => EitherT[F, Result, Result]
-    ): Action[B] = ab.async { c =>
-      cb(c).value.map(_.merge).toIO.unsafeToFuture()
+    def zio[E, A](bp: BodyParser[A])(zioActionBody: R[A] => IO[E, Result]): Action[A] = actionBuilder(bp).async { request =>
+      runtime.unsafeRun(
+        ioToTask(zioActionBody(request)).toFuture
+      )
     }
 
-    def asyncEitherT[F[_]: Effect, A](
-        bp: BodyParser[A]
-    )(cb: R[A] => EitherT[F, Result, Result]): Action[A] =
-      ab.async[A](bp) { c =>
-        cb(c).value.map(_.merge).toIO.unsafeToFuture()
+    private def ioToTask[E, A](io: IO[E, A]) =
+      io.mapError {
+        case t: Throwable => t
+        case s: String    => new Throwable(s)
+        case e            => new Throwable("Error: " + e.toString)
       }
   }
 
+  implicit class RecoverIO[E, A](io: IO[E, A]) {
+    def recover(f: E => A): UIO[A] = io.fold(f, identity)
+  }
 }

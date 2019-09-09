@@ -1,76 +1,73 @@
 package controllers
 
-import cats.data.EitherT
-import cats.effect.IO
 import play.api.libs.json._
 import play.api.mvc._
-import users.AppErrors.{MyEffect, MyEffectWithError}
-import users.{User, UserService}
+import users.{AppError, DataValidationError, User, UserService}
+import zio.IO
 
 class UserController(
-    userService: UserService[MyEffect],
+    userService: UserService,
     controllerComponents: ControllerComponents
 ) extends AbstractController(controllerComponents) {
 
-  private def jsResultToEff[A](
-      jsResult: JsResult[A]
-  ): MyEffectWithError[Result, A] =
-    EitherT
-      .fromEither[IO](jsResult.asEither)
-      .leftMap(e => BadRequest(JsError.toJson(e)))
+  private def jsonValidation[A](jsValue: JsValue)(implicit reads: Reads[A]) =
+    IO.fromEither(jsValue.validate[A].asEither).mapError(e => DataValidationError(e.toString))
 
   import libs.http._
 
-  def createUser(): Action[JsValue] = Action.asyncEitherT(parse.json) { req =>
-    import User._
+  // Action.zio takes a function returning a IO for a given request
+  def createUser(): Action[JsValue] = Action.zio(parse.json) { req =>
+    val user = for {
+      toCreate <- jsonValidation[User](req.body)
+      created  <- userService.createUser(toCreate)
+    } yield created
 
-    for {
-      toCreate <- jsResultToEff(req.body.validate[User])
-      created <- userService
-                  .createUser(toCreate)
-                  .leftMap(e => BadRequest(Json.obj("error" -> e)))
-    } yield Ok(Json.toJson(created))
+    // return a Bad Request status if an error is found, else return the user in Json format
+    user.fold({
+      case e => BadRequest(Json.obj("error" -> e.message))
+    }, user => Ok(Json.toJson(user)))
+
   }
 
   def updateUser(id: String): Action[JsValue] =
-    Action.asyncEitherT(parse.json) { req =>
-      import User._
-      for {
-        toUpdate <- jsResultToEff(req.body.validate[User])
+    Action.zio(parse.json) { req =>
+      val user: IO[AppError, User] = for {
+        toUpdate <- jsonValidation[User](req.body)
         updated <- userService
                     .updateUser(id, toUpdate)
-                    .leftMap(e => BadRequest(Json.obj("error" -> e)))
-      } yield Ok(Json.toJson(updated))
+      } yield updated
+
+      // you can also return different http codes depending on the error
+      user.fold(
+        {
+          case e: DataValidationError => BadRequest(Json.obj("error"          -> e.message))
+          case e                      => InternalServerError(Json.obj("error" -> e.message))
+        },
+        user => Ok(Json.toJson(user))
+      )
     }
 
-  def deleteUser(id: String): Action[AnyContent] = Action.asyncEitherT { _ =>
+  def deleteUser(id: String): Action[AnyContent] = Action.zio { _ =>
     userService
       .deleteUser(id)
-      .map { _ =>
-        NoContent
-      }
-      .leftMap(e => BadRequest(Json.obj("error" -> e)))
+      .fold(e => BadRequest(Json.obj("error" -> e.message)), _ => NoContent)
   }
 
-  def getUser(id: String): Action[AnyContent] = Action.asyncEitherT { _ =>
-    import User._
+  def getUser(id: String): Action[AnyContent] = Action.zio { _ =>
     userService
       .get(id)
       .map {
         case Some(user) => Ok(Json.toJson(user))
         case None       => NotFound(Json.obj())
       }
-      .leftMap(e => BadRequest(Json.obj("error" -> e)))
+      .recover(e => BadRequest(Json.obj("error" -> e.message)))
   }
 
-  def listUser(): Action[AnyContent] = Action.asyncEitherT { _ =>
+  def listUser(): Action[AnyContent] = Action.zio { _ =>
     userService
       .list()
-      .map { users =>
-        Ok(Json.toJson(users))
-      }
-      .leftMap(e => BadRequest(Json.obj("error" -> e)))
-
+      .map(users => Ok(Json.toJson(users)))
+      .recover(e => BadRequest(Json.obj("error" -> e.message)))
   }
 
 }

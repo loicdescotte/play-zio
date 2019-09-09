@@ -1,6 +1,6 @@
-# Play / cats integration 
+# Play / ZIO integration 
 
-This project show cats and cats effect integration with tagless pattern in a playframework application. 
+This project shows ZIO integration in a playframework application. 
 
 ## Run the project 
 
