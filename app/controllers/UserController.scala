@@ -2,7 +2,7 @@ package controllers
 
 import play.api.libs.json._
 import play.api.mvc._
-import users.{AppError, DataValidationError, User, UserService}
+import users.{DataValidationError, User, UserService}
 import zio.IO
 
 class UserController(
@@ -16,25 +16,21 @@ class UserController(
   import libs.http._
 
   // Action.zio takes a function returning a IO for a given request
-  def createUser(): Action[JsValue] = Action.zio(parse.json) { req =>
+  def createUser: Action[JsValue] = Action.zio(parse.json) { req =>
     val user = for {
       toCreate <- jsonValidation[User](req.body)
       created  <- userService.createUser(toCreate)
     } yield created
 
     // return a Bad Request status if an error is found, else return the user in Json format
-    user.fold({
-      case e => BadRequest(Json.obj("error" -> e.message))
-    }, user => Ok(Json.toJson(user)))
-
+    user.fold(e => BadRequest(Json.obj("error" -> e.message)), user => Ok(Json.toJson(user)))
   }
 
   def updateUser(id: String): Action[JsValue] =
     Action.zio(parse.json) { req =>
-      val user: IO[AppError, User] = for {
+      val user = for {
         toUpdate <- jsonValidation[User](req.body)
-        updated <- userService
-                    .updateUser(id, toUpdate)
+        updated  <- userService.updateUser(id, toUpdate)
       } yield updated
 
       // you can also return different http codes depending on the error
@@ -63,9 +59,8 @@ class UserController(
       .recover(e => BadRequest(Json.obj("error" -> e.message)))
   }
 
-  def listUser(): Action[AnyContent] = Action.zio { _ =>
-    userService
-      .list()
+  def listUser: Action[AnyContent] = Action.zio { _ =>
+    userService.list
       .map(users => Ok(Json.toJson(users)))
       .recover(e => BadRequest(Json.obj("error" -> e.message)))
   }

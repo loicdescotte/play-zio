@@ -1,12 +1,12 @@
 package libs
 
 import play.api.mvc.{Action, ActionBuilder, BodyParser, Result}
-import zio.{DefaultRuntime, IO, UIO}
+import zio.{IO, Runtime, UIO}
 
 object http {
 
   //TODO use ZIO environment if need to do more complex dependency injection
-  val runtime = new DefaultRuntime {}
+  val runtime: Runtime[zio.ZEnv] = Runtime.default
 
   implicit class ActionBuilderOps[+R[_], B](actionBuilder: ActionBuilder[R, B]) {
 

@@ -3,16 +3,18 @@ package users
 import java.time.{LocalDate, Period}
 
 import akka.actor.ActorSystem
-import play.api.libs.json.Json
+import play.api.libs.json.{Json, OFormat}
 import users.Event.{UserCreated, UserDeleted, UserUpdated}
-import zio.IO
+import zio.{IO, UIO}
 
 import scala.collection.concurrent.TrieMap
 
-case class User(email: String, name: String, birthDate: LocalDate, drivingLicenceDate: Option[LocalDate])
+case class User(email: String, name: String, birthDate: LocalDate, drivingLicenceDate: Option[LocalDate]) {
+  def age: Int = Period.between(birthDate, LocalDate.now()).getYears
+}
 
 object User {
-  implicit val format = Json.format[User]
+  implicit val format: OFormat[User] = Json.format
 }
 
 sealed trait Event
@@ -39,7 +41,7 @@ trait UserRepository {
 
   def delete(id: String): IO[DatabaseAccessError, Unit]
 
-  def list(): IO[DatabaseAccessError, Seq[User]]
+  def list: IO[DatabaseAccessError, Seq[User]]
 
 }
 
@@ -48,19 +50,19 @@ trait EventStore {
 }
 
 class InMemoryUserRepository extends UserRepository {
-  private val datas = TrieMap.empty[String, User]
+  private val data = TrieMap.empty[String, User]
 
-  override def get(id: String) = IO.succeed(datas.get(id))
+  override def get(id: String): UIO[Option[User]] = IO.succeed(data.get(id))
 
-  override def set(id: String, user: User) = IO.succeed(datas.update(id, user))
+  override def set(id: String, user: User): UIO[Unit] = IO.succeed(data.update(id, user))
 
-  override def delete(id: String) = IO.succeed(datas.remove(id).fold(())(_ => ()))
+  override def delete(id: String): UIO[Unit] = IO.succeed(data.remove(id).fold(())(_ => ()))
 
-  override def list() = IO.succeed(datas.values.toSeq)
+  override def list: UIO[Seq[User]] = IO.succeed(data.values.toSeq)
 }
 
 class AkkaEventStore(implicit system: ActorSystem) extends EventStore {
-  override def publish(event: Event) = IO.succeed(system.eventStream.publish(event))
+  override def publish(event: Event): UIO[Unit] = IO.succeed(system.eventStream.publish(event))
 }
 
 class UserService(userRepository: UserRepository, eventStore: EventStore) {
@@ -78,7 +80,7 @@ class UserService(userRepository: UserRepository, eventStore: EventStore) {
     for {
       _         <- IO.fromEither(validateDrivingLicence(user))
       mayBeUser <- userRepository.get(user.email)
-      _         <- mayBeUser.map(IO.succeed).getOrElse(IO.fail(DataValidationError("User not exist, can't be updated")))
+      _         <- mayBeUser.map(IO.succeed(_)).getOrElse(IO.fail(DataValidationError("User not exist, can't be updated")))
       _         <- userRepository.set(user.email, user)
       _         <- eventStore.publish(UserUpdated(id, user))
     } yield user
@@ -88,23 +90,19 @@ class UserService(userRepository: UserRepository, eventStore: EventStore) {
       .delete(id)
       .flatMap(_ => eventStore.publish(UserDeleted(id)))
 
-  def get(id: String): IO[DatabaseAccessError, Option[User]] =
-    userRepository.get(id)
+  def get(id: String): IO[DatabaseAccessError, Option[User]] = userRepository.get(id)
 
-  def list(): IO[DatabaseAccessError, Seq[User]] = userRepository.list()
+  def list: IO[DatabaseAccessError, Seq[User]] = userRepository.list
 
-  private def validateDrivingLicence(user: User): Either[DataValidationError, User] = {
-    val licenceMinimumAge = user.birthDate.plusYears(18)
-    (user.drivingLicenceDate, user.birthDate) match {
-      case (Some(licenceDate), birthDate) if age(birthDate) >= 18 && licenceDate.isAfter(licenceMinimumAge) =>
-        Right(user)
-      case (Some(_), _) =>
-        Left(DataValidationError("Too young to get a licence"))
-      case (None, _) =>
-        Right(user)
+  private def validateDrivingLicence(user: User): Either[DataValidationError, User] =
+    user.drivingLicenceDate.fold[Either[DataValidationError, User]](Right(user)) { licenceDate =>
+      val isValidLicence = {
+        val adultAge: Long    = 18
+        val licenceMinimumAge = user.birthDate.plusYears(adultAge)
+        user.age >= adultAge && licenceDate.isAfter(licenceMinimumAge)
+      }
+
+      if (isValidLicence) Right(user) else Left(DataValidationError("Too young to get a licence"))
     }
-  }
-
-  private def age(date: LocalDate): Int = Period.between(date, LocalDate.now()).getYears
 
 }

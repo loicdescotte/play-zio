@@ -1,7 +1,5 @@
-
-
-POST    /users         controllers.UserController.createUser()
-GET     /users         controllers.UserController.listUser()
-GET     /users/:id     controllers.UserController.getUser(id: String)
-PUT     /users/:id     controllers.UserController.updateUser(id: String)
-DELETE  /users/:id     controllers.UserController.deleteUser(id: String)
+POST          /users            controllers.UserController.createUser
+GET           /users            controllers.UserController.listUser
+GET           /users/:id        controllers.UserController.getUser(id: String)
+PUT           /users/:id        controllers.UserController.updateUser(id: String)
+DELETE        /users/:id        controllers.UserController.deleteUser(id: String)
